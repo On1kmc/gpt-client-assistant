@@ -10,13 +10,12 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 
-import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.Map;
+import java.util.concurrent.*;
 
 public class ChatGPTClient {
 
@@ -25,13 +24,91 @@ public class ChatGPTClient {
     private final GPTModel GPT_MODEL;
     private final ConcurrentMap<Long, GPTThread> threadsMap;
     private final GptMessage systemMessage;
+    private volatile long expirationMillis;
+
+    private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "threads-cleaner");
+        t.setDaemon(true);
+        return t;
+    });
 
     public ChatGPTClient(String apiToken, GPTModel GPT_MODEL, String instruction) {
         threadsMap = new ConcurrentHashMap<>();
         API_TOKEN = apiToken;
         this.GPT_MODEL = GPT_MODEL;
         systemMessage = getSystemMessage(instruction);
+        setTimeout(TimeUnit.HOURS, 1);
+        startCleaner(1,  TimeUnit.MINUTES);
     }
+
+    public ChatGPTClient(String apiToken, GPTModel GPT_MODEL, String instruction, TimeUnit timeUnit, int timeout) {
+        threadsMap = new ConcurrentHashMap<>();
+        API_TOKEN = apiToken;
+        this.GPT_MODEL = GPT_MODEL;
+        systemMessage = getSystemMessage(instruction);
+        setTimeout(timeUnit, timeout);
+        startCleaner(1,  TimeUnit.MINUTES);
+    }
+
+
+
+    public void setTimeout(TimeUnit unit, long value) {
+        if (unit == null) throw new IllegalArgumentException("unit is null");
+        if (value <= 0) throw new IllegalArgumentException("value must be > 0");
+        this.expirationMillis = unit.toMillis(value);
+    }
+
+
+    // Запустить фоновую уборку (checkInterval — как часто проверять)
+    public void startCleaner(long checkInterval, TimeUnit unit) {
+        // предотвратить повторный запуск
+        cleaner.scheduleAtFixedRate(this::cleanUp, 0, Math.max(1, checkInterval), unit);
+    }
+
+    // Остановить уборщик (вызывайте при shutdown)
+    public void stopCleaner() {
+        cleaner.shutdownNow();
+    }
+
+    // Основная логика очистки
+    private void cleanUp() {
+        try {
+            long now = System.currentTimeMillis();
+            for (Map.Entry<Long, GPTThread> entry : threadsMap.entrySet()) {
+                GPTThread thread = entry.getValue();
+                if (thread == null) continue;
+                long last = thread.getLastAccessTimeMillis();
+                if (now - last >= expirationMillis) {
+                    threadsMap.remove(entry.getKey(), thread);
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    // Пример получения/создания потока: не забываем обновлять метку активности
+    public GPTThread getOrCreateThread(Long userId) {
+        return threadsMap.compute(userId, (k, existing) -> {
+            if (existing == null) {
+                List<GptMessage> list = new ArrayList<>();
+                list.add(systemMessage);
+                GPTThread nt = new GPTThread(list);
+                nt.touch();
+                return nt;
+            } else {
+                existing.touch();
+                return existing;
+            }
+        });
+    }
+
+    // Принудительно удалить
+    public void removeThread(Long userId) {
+        threadsMap.remove(userId);
+    }
+
+
 
     public String sendTextMessage(Long userId, String messageText, String name) throws JsonProcessingException {
         return sendMessages(userId, messageText, null, name);
@@ -46,14 +123,7 @@ public class ChatGPTClient {
     }
 
     public String sendMessages(Long userId, String messageText, String imageUrl, String name) throws JsonProcessingException {
-        GPTThread thread = threadsMap.get(userId);
-        if (thread == null) {
-            List<GptMessage> list = new ArrayList<>();
-            list.add(systemMessage);
-
-            thread = new GPTThread(list);
-            threadsMap.put(userId, thread);
-        }
+        GPTThread thread = getOrCreateThread(userId);
         List<GptMessage> messages = thread.getMessages();
 
         GptMessage gptMessage = new GptMessage();

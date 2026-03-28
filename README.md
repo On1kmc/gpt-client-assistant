@@ -203,42 +203,6 @@ public enum GPTModel {
 }
 ```
 
-## 🔐 Безопасность
-
-### Получение API ключа
-
-1. Перейдите на [OpenAI Platform](https://platform.openai.com/)
-2. Войдите в свой аккаунт
-3. Перейдите в [API Keys](https://platform.openai.com/api-keys)
-4. Создайте новый ключ
-
-### Хранение API ключа
-
-**❌ НИКОГДА** не hardcode'ируйте ключ в коде:
-
-```java
-// ❌ НЕПРАВИЛЬНО
-String apiKey = "sk-your-api-key-here";
-```
-
-**✅ Используйте переменные окружения:**
-
-```java
-String apiKey = System.getenv("OPENAI_API_KEY");
-
-ChatGPTClient client = new ChatGPTClient.Builder()
-    .apiToken(apiKey)
-    .model(GPTModel.GPT_5_4)
-    .build();
-```
-
-**✅ Или конфигурационные файлы:**
-
-```properties
-# application.properties
-openai.api.key=${OPENAI_API_KEY}
-```
-
 ## 💡 Примеры использования
 
 ### Пример 1: Простой чатбот

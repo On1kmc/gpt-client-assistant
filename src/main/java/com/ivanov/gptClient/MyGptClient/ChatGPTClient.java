@@ -19,12 +19,13 @@ import java.util.concurrent.*;
 
 public class ChatGPTClient {
 
-    private final String ENDPOINT = "https://api.openai.com/v1/responses";
+    final String ENDPOINT = "https://api.openai.com/v1/responses";
     private final String API_TOKEN;
     private final GPTModel GPT_MODEL;
     private final ConcurrentMap<Long, GPTThread> threadsMap;
+    private final boolean needSystemMessage;
     private final GptMessage systemMessage;
-    private volatile long expirationMillis;
+    private final long expirationMillis;
 
     private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "threads-cleaner");
@@ -32,30 +33,85 @@ public class ChatGPTClient {
         return t;
     });
 
-    public ChatGPTClient(String apiToken, GPTModel GPT_MODEL, String instruction) {
-        threadsMap = new ConcurrentHashMap<>();
-        API_TOKEN = apiToken;
-        this.GPT_MODEL = GPT_MODEL;
-        systemMessage = getSystemMessage(instruction);
-        setTimeout(TimeUnit.HOURS, 1);
-        startCleaner(1,  TimeUnit.MINUTES);
+    private ChatGPTClient(Builder builder) {
+        API_TOKEN = builder.apiToken;
+        GPT_MODEL = builder.model;
+
+        this.needSystemMessage = builder.needSystemMessage;
+        boolean needCleaner = builder.needCleaner;
+        this.threadsMap = new ConcurrentHashMap<>();
+
+        this.expirationMillis = builder.expirationMillis;
+        if (needCleaner) {
+            startCleaner(1,  TimeUnit.MINUTES);
+        }
+
+        if (needSystemMessage) {
+            this.systemMessage = getSystemMessage(builder.instruction);
+        } else {
+            this.systemMessage = null;
+        }
     }
 
-    public ChatGPTClient(String apiToken, GPTModel GPT_MODEL, String instruction, TimeUnit timeUnit, int timeout) {
-        threadsMap = new ConcurrentHashMap<>();
-        API_TOKEN = apiToken;
-        this.GPT_MODEL = GPT_MODEL;
-        systemMessage = getSystemMessage(instruction);
-        setTimeout(timeUnit, timeout);
-        startCleaner(1,  TimeUnit.MINUTES);
-    }
 
 
 
-    public void setTimeout(TimeUnit unit, long value) {
-        if (unit == null) throw new IllegalArgumentException("unit is null");
-        if (value <= 0) throw new IllegalArgumentException("value must be > 0");
-        this.expirationMillis = unit.toMillis(value);
+    public static class Builder {
+
+        private String apiToken;
+        private GPTModel model;
+        private String instruction;
+        private boolean needSystemMessage = false;
+        private boolean needCleaner = false;
+        private long expirationMillis;
+
+        // --- setters ---
+        public Builder apiToken(String apiToken) {
+            this.apiToken = apiToken;
+            return this;
+        }
+
+        public Builder model(GPTModel model) {
+            this.model = model;
+            return this;
+        }
+
+        public Builder enableCleaner(TimeUnit unit, long duration) {
+            this.needCleaner = true;
+            this.expirationMillis = unit.toMillis(duration);
+            return this;
+        }
+
+        public Builder enableSystemMessage(String instruction) {
+            this.needSystemMessage = true;
+            this.instruction = instruction;
+            return this;
+        }
+
+        // --- BUILD ---
+        public ChatGPTClient build() {
+            validate();
+            return new ChatGPTClient(this);
+        }
+
+        // ===== VALIDATION =====
+        private void validate() {
+            if (apiToken == null || apiToken.isBlank()) {
+                throw new IllegalStateException("API token is required");
+            }
+
+            if (model == null) {
+                throw new IllegalStateException("GPT model is required");
+            }
+
+            if (needSystemMessage && (instruction == null || instruction.isBlank())) {
+                throw new IllegalStateException("System message enabled but not provided");
+            }
+
+            if (needCleaner && expirationMillis == 0) {
+                throw new IllegalStateException("Expiration must be > 0");
+            }
+        }
     }
 
 
@@ -91,9 +147,13 @@ public class ChatGPTClient {
     public GPTThread getOrCreateThread(Long userId) {
         return threadsMap.compute(userId, (k, existing) -> {
             if (existing == null) {
-                List<GptMessage> list = new ArrayList<>();
-                list.add(systemMessage);
-                GPTThread nt = new GPTThread(list);
+                GPTThread nt;
+                if (needSystemMessage) {List<GptMessage> list = new ArrayList<>();
+                    list.add(systemMessage);
+                    nt = new GPTThread(list);
+                } else {
+                    nt = new GPTThread(new ArrayList<>());
+                }
                 nt.touch();
                 return nt;
             } else {
@@ -110,19 +170,21 @@ public class ChatGPTClient {
 
 
 
-    public String sendTextMessage(Long userId, String messageText, String name) throws JsonProcessingException {
-        return sendMessages(userId, messageText, null, name);
+    public GPTResponse sendTextMessage(Long userId, String messageText) throws JsonProcessingException {
+        return sendMessages(userId, messageText, null, false);
+    }
+    public GPTResponse sendTextMessageWithWeb(Long userId, String messageText, boolean needWeb) throws JsonProcessingException {
+        return sendMessages(userId, messageText, null, true);
     }
 
-    public String sendImageMessage(Long userId, String imageLink, String name) throws JsonProcessingException {
-        return sendMessages(userId, null, imageLink, name);
+    public GPTResponse sendImageMessage(Long userId, String imageLink) throws JsonProcessingException {
+        return sendMessages(userId, null, imageLink, false);
+    }
+    public GPTResponse sendImageMessageWithWeb(Long userId, String imageLink) throws JsonProcessingException {
+        return sendMessages(userId, null, imageLink, true);
     }
 
-    public String sendMessages(Long userId, String messageText, String name) throws JsonProcessingException {
-        return sendMessages(userId, messageText, null, name);
-    }
-
-    public String sendMessages(Long userId, String messageText, String imageUrl, String name) throws JsonProcessingException {
+    public GPTResponse sendMessages(Long userId, String messageText, String imageUrl, boolean needWeb) throws JsonProcessingException {
         GPTThread thread = getOrCreateThread(userId);
         List<GptMessage> messages = thread.getMessages();
 
@@ -150,30 +212,30 @@ public class ChatGPTClient {
 
         ObjectMapper objectMapper = new ObjectMapper();
 
-        GptRequestEntity requestEntity = new GptRequestEntity();
+        GptRequestEntity requestEntity = new GptRequestEntity(needWeb);
         requestEntity.setModel(GPT_MODEL.getTitle());
         requestEntity.setInput(messages);
 
         String stringObject = objectMapper.writeValueAsString(requestEntity);
         StringEntity stringEntity = new StringEntity(stringObject, StandardCharsets.UTF_8);
 
-        String answer = sendRequest(stringEntity);
+        GPTResponse response = sendRequest(stringEntity);
 
         GptMessage answerMsg = new GptMessage();
         List<ContentPart> content = new ArrayList<>();
         TextContentPart textContent = new TextContentPart();
-        textContent.setText(answer);
+        textContent.setText(response.getAnswer());
         textContent.setType("output_text");
         content.add(textContent);
         answerMsg.setContent(content);
         answerMsg.setRole("assistant");
         messages.add(answerMsg);
 
-        return answer;
+        return response;
     }
 
 
-    private String sendRequest(StringEntity stringEntity) {
+    private GPTResponse sendRequest(StringEntity stringEntity) {
         HttpPost request = new HttpPost(ENDPOINT);
         request.addHeader("Authorization", "Bearer " + API_TOKEN);
         request.addHeader("Content-Type", "application/json");
@@ -196,7 +258,13 @@ public class ChatGPTClient {
                             stringBuilder.append(jsonNode1.get("content").get(0).get("text").textValue()).append("\n");
                         }
                     }
-                    return stringBuilder.toString();
+                    GPTResponse myResponse = new GPTResponse();
+                    myResponse.setAnswer(stringBuilder.toString());
+                    JsonNode usageNode = obj.get("usage");
+                    myResponse.setInputTokens(usageNode.get("input_tokens").numberValue().longValue());
+                    myResponse.setOutputTokens(usageNode.get("output_tokens").numberValue().longValue());
+
+                    return myResponse;
                 }
             }
         } catch (Exception e) {

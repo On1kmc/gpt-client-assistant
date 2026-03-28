@@ -5,9 +5,19 @@ import java.util.List;
 
 public class GptRequestEntity {
 
+    public GptRequestEntity() {
+    }
+    public GptRequestEntity(boolean needWeb) {
+        if (needWeb) {
+            this.tools = List.of(new GPTTool());
+        }
+    }
+
     private String model;
 
     private List<GptMessage> input;
+
+    private List<GPTTool> tools;
 
 
     public String getModel() {
@@ -24,5 +34,13 @@ public class GptRequestEntity {
 
     public void setInput(List<GptMessage> input) {
         this.input = input;
+    }
+
+    public List<GPTTool> getTools() {
+        return tools;
+    }
+
+    public void setTools(List<GPTTool> tools) {
+        this.tools = tools;
     }
 }

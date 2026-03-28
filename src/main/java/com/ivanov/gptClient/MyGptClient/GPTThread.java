@@ -6,6 +6,15 @@ public class GPTThread {
 
     private volatile long lastAccessTimeMillis = System.currentTimeMillis();
 
+    private volatile long tokens;
+    private List<GptMessage> messages;
+
+    public GPTThread(List<GptMessage> list) {
+        messages = list;
+    }
+
+
+
     public void touch() {
         lastAccessTimeMillis = System.currentTimeMillis();
     }
@@ -13,13 +22,6 @@ public class GPTThread {
     public long getLastAccessTimeMillis() {
         return lastAccessTimeMillis;
     }
-
-    public GPTThread(List<GptMessage> list) {
-        messages = list;
-    }
-
-
-    private List<GptMessage> messages;
 
     public List<GptMessage> getMessages() {
         return messages;

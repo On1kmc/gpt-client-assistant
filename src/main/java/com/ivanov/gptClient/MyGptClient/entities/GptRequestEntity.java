@@ -1,4 +1,6 @@
-package com.ivanov.gptClient.MyGptClient;
+package com.ivanov.gptClient.MyGptClient.entities;
+
+import com.ivanov.gptClient.MyGptClient.messages.GptMessage;
 
 import java.util.List;
 

@@ -1,13 +1,21 @@
-package com.ivanov.gptClient.MyGptClient;
+package com.ivanov.gptClient.MyGptClient.assistant;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ivanov.gptClient.MyGptClient.*;
+import com.ivanov.gptClient.MyGptClient.entities.GPTResponse;
+import com.ivanov.gptClient.MyGptClient.entities.GptRequestEntity;
+import com.ivanov.gptClient.MyGptClient.messages.ContentPart;
+import com.ivanov.gptClient.MyGptClient.messages.GptMessage;
+import com.ivanov.gptClient.MyGptClient.messages.ImageContentPart;
+import com.ivanov.gptClient.MyGptClient.messages.TextContentPart;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 
 import java.io.InputStream;
@@ -16,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class ChatGPTClient {
 
@@ -24,8 +33,9 @@ public class ChatGPTClient {
     private final GPTModel GPT_MODEL;
     private final ConcurrentMap<Long, GPTThread> threadsMap;
     private final boolean needSystemMessage;
-    private final GptMessage systemMessage;
+    private GptMessage systemMessage;
     private final long expirationMillis;
+    private final ConcurrentMap<Long, ReentrantLock> userLocks = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "threads-cleaner");
@@ -136,6 +146,7 @@ public class ChatGPTClient {
                 long last = thread.getLastAccessTimeMillis();
                 if (now - last >= expirationMillis) {
                     threadsMap.remove(entry.getKey(), thread);
+                    userLocks.remove(entry.getKey());
                 }
             }
         } catch (Throwable t) {
@@ -166,6 +177,7 @@ public class ChatGPTClient {
     // Принудительно удалить
     public void removeThread(Long userId) {
         threadsMap.remove(userId);
+        userLocks.remove(userId);
     }
 
 
@@ -173,7 +185,7 @@ public class ChatGPTClient {
     public GPTResponse sendTextMessage(Long userId, String messageText) throws JsonProcessingException {
         return sendMessages(userId, messageText, null, false);
     }
-    public GPTResponse sendTextMessageWithWeb(Long userId, String messageText, boolean needWeb) throws JsonProcessingException {
+    public GPTResponse sendTextMessageWithWeb(Long userId, String messageText) throws JsonProcessingException {
         return sendMessages(userId, messageText, null, true);
     }
 
@@ -185,53 +197,60 @@ public class ChatGPTClient {
     }
 
     public GPTResponse sendMessages(Long userId, String messageText, String imageUrl, boolean needWeb) throws JsonProcessingException {
-        GPTThread thread = getOrCreateThread(userId);
-        List<GptMessage> messages = thread.getMessages();
+        ReentrantLock lock = userLocks.computeIfAbsent(userId, id -> new ReentrantLock());
 
-        GptMessage gptMessage = new GptMessage();
-        List<ContentPart> contentParts = new ArrayList<>();
+        lock.lock();
+        try {
+            GPTThread thread = getOrCreateThread(userId);
+            List<GptMessage> messages = thread.getMessages();
+
+            GptMessage gptMessage = new GptMessage();
+            List<ContentPart> contentParts = new ArrayList<>();
 
 
-        if (messageText != null) {
-            TextContentPart textContentPart = new TextContentPart();
-            textContentPart.setType("input_text");
-            textContentPart.setText(messageText);
-            contentParts.add(textContentPart);
+            if (messageText != null) {
+                TextContentPart textContentPart = new TextContentPart();
+                textContentPart.setType("input_text");
+                textContentPart.setText(messageText);
+                contentParts.add(textContentPart);
+            }
+
+            if (imageUrl != null) {
+                ImageContentPart imageContentPart = new ImageContentPart();
+                imageContentPart.setImage_url(imageUrl);
+                imageContentPart.setType("input_image");
+                contentParts.add(imageContentPart);
+            }
+
+            gptMessage.setContent(contentParts);
+            gptMessage.setRole("user");
+            messages.add(gptMessage);
+
+            ObjectMapper objectMapper = new ObjectMapper();
+
+            GptRequestEntity requestEntity = new GptRequestEntity(needWeb);
+            requestEntity.setModel(GPT_MODEL.getTitle());
+            requestEntity.setInput(messages);
+
+            String stringObject = objectMapper.writeValueAsString(requestEntity);
+            StringEntity stringEntity = new StringEntity(stringObject, StandardCharsets.UTF_8);
+
+            GPTResponse response = sendRequest(stringEntity);
+
+            GptMessage answerMsg = new GptMessage();
+            List<ContentPart> content = new ArrayList<>();
+            TextContentPart textContent = new TextContentPart();
+            textContent.setText(response.getAnswer());
+            textContent.setType("output_text");
+            content.add(textContent);
+            answerMsg.setContent(content);
+            answerMsg.setRole("assistant");
+            messages.add(answerMsg);
+
+            return response;
+        } finally {
+            lock.unlock();
         }
-
-        if (imageUrl != null) {
-            ImageContentPart imageContentPart = new ImageContentPart();
-            imageContentPart.setImage_url(imageUrl);
-            imageContentPart.setType("input_image");
-            contentParts.add(imageContentPart);
-        }
-
-        gptMessage.setContent(contentParts);
-        gptMessage.setRole("user");
-        messages.add(gptMessage);
-
-        ObjectMapper objectMapper = new ObjectMapper();
-
-        GptRequestEntity requestEntity = new GptRequestEntity(needWeb);
-        requestEntity.setModel(GPT_MODEL.getTitle());
-        requestEntity.setInput(messages);
-
-        String stringObject = objectMapper.writeValueAsString(requestEntity);
-        StringEntity stringEntity = new StringEntity(stringObject, StandardCharsets.UTF_8);
-
-        GPTResponse response = sendRequest(stringEntity);
-
-        GptMessage answerMsg = new GptMessage();
-        List<ContentPart> content = new ArrayList<>();
-        TextContentPart textContent = new TextContentPart();
-        textContent.setText(response.getAnswer());
-        textContent.setType("output_text");
-        content.add(textContent);
-        answerMsg.setContent(content);
-        answerMsg.setRole("assistant");
-        messages.add(answerMsg);
-
-        return response;
     }
 
 
@@ -244,29 +263,24 @@ public class ChatGPTClient {
         try (CloseableHttpClient httpclient = HttpClients.custom()
                 .disableCookieManagement()
                 .build()) {
-            try (CloseableHttpResponse response = httpclient.execute(request)) {
-                HttpEntity responseEntity = response.getEntity();
-                try (InputStream ins = responseEntity.getContent()) {
-                    byte[] bytes1 = ins.readAllBytes();
-                    String str = new String(bytes1, StandardCharsets.UTF_8);
-                    ObjectMapper mapper = new ObjectMapper();
-                    JsonNode obj = mapper.readTree(str);
-                    JsonNode jsonNode = obj.get("output");
-                    StringBuilder stringBuilder = new StringBuilder();
-                    for (JsonNode jsonNode1 : jsonNode) {
-                        if (jsonNode1.get("type").asText().equals("message")) {
-                            stringBuilder.append(jsonNode1.get("content").get(0).get("text").textValue()).append("\n");
-                        }
-                    }
-                    GPTResponse myResponse = new GPTResponse();
-                    myResponse.setAnswer(stringBuilder.toString());
-                    JsonNode usageNode = obj.get("usage");
-                    myResponse.setInputTokens(usageNode.get("input_tokens").numberValue().longValue());
-                    myResponse.setOutputTokens(usageNode.get("output_tokens").numberValue().longValue());
+            String str = httpclient.execute(request, response -> EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8));
 
-                    return myResponse;
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode obj = mapper.readTree(str);
+            JsonNode jsonNode = obj.get("output");
+            StringBuilder stringBuilder = new StringBuilder();
+            for (JsonNode jsonNode1 : jsonNode) {
+                if (jsonNode1.get("type").asText().equals("message")) {
+                    stringBuilder.append(jsonNode1.get("content").get(0).get("text").textValue()).append("\n");
                 }
             }
+            GPTResponse myResponse = new GPTResponse();
+            myResponse.setAnswer(stringBuilder.toString());
+            JsonNode usageNode = obj.get("usage");
+            myResponse.setInputTokens(usageNode.get("input_tokens").numberValue().longValue());
+            myResponse.setOutputTokens(usageNode.get("output_tokens").numberValue().longValue());
+
+            return myResponse;
         } catch (Exception e) {
             throw new RuntimeException();
         }
@@ -281,5 +295,15 @@ public class ChatGPTClient {
         systemGRPMessage.setContent(List.of(systemMessage));
         systemGRPMessage.setRole("system");
         return systemGRPMessage;
+    }
+
+    public void setSystemMessage(String instruction) {
+        GptMessage systemGRPMessage = new GptMessage();
+        TextContentPart systemMessage = new TextContentPart();
+        systemMessage.setText(instruction);
+        systemMessage.setType("input_text");
+        systemGRPMessage.setContent(List.of(systemMessage));
+        systemGRPMessage.setRole("system");
+        this.systemMessage = systemGRPMessage;
     }
 }

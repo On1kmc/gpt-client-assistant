@@ -1,4 +1,4 @@
-package com.ivanov.gptClient.MyGptClient;
+package com.ivanov.gptClient.MyGptClient.entities;
 
 
 public class GPTResponse {

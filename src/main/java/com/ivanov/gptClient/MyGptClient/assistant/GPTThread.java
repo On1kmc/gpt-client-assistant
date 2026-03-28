@@ -1,4 +1,6 @@
-package com.ivanov.gptClient.MyGptClient;
+package com.ivanov.gptClient.MyGptClient.assistant;
+
+import com.ivanov.gptClient.MyGptClient.messages.GptMessage;
 
 import java.util.List;
 
@@ -29,5 +31,13 @@ public class GPTThread {
 
     public void setMessages(List<GptMessage> messages) {
         this.messages = messages;
+    }
+
+    public long getTokens() {
+        return tokens;
+    }
+
+    public void setTokens(long tokens) {
+        this.tokens = tokens;
     }
 }

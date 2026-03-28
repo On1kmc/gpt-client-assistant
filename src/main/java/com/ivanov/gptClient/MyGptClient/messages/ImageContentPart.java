@@ -1,4 +1,4 @@
-package com.ivanov.gptClient.MyGptClient;
+package com.ivanov.gptClient.MyGptClient.messages;
 
 public class ImageContentPart  implements ContentPart {
 

@@ -2,8 +2,6 @@
 
 [![](https://jitpack.io/v/On1kmc/gpt-client-assistant.svg)](https://jitpack.io/#On1kmc/gpt-client-assistant)
 ![Java](https://img.shields.io/badge/Java-24-orange)
-![Maven](https://img.shields.io/badge/Maven-3.6+-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
 
 Высокопроизводительная Java библиотека для интеграции с OpenAI GPT API с поддержкой многопоточности, истории сообщений и управления потоками разговоров.
 

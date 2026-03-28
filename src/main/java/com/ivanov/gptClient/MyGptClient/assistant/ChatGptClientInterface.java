@@ -32,9 +32,17 @@ public interface ChatGptClientInterface {
                 .disableCookieManagement()
                 .build()) {
             logger.debug("Sending request to GPT API endpoint: {}", ENDPOINT);
-            String str = httpclient.execute(request, response -> EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8));
+            String responseString = httpclient.execute(request, response -> {
+                if (response.getCode() == 200) {
+                    return EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+                } else {
+                    logger.error("OpenAI API error: HTTP {}", response.getCode());
+                    String errorBody = EntityUtils.toString(response.getEntity());
+                    throw new RuntimeException("OpenAI API error: " + response.getCode() + ", " + errorBody);
+                }
+            });
 
-            JsonNode obj = objectMapper.readTree(str);
+            JsonNode obj = objectMapper.readTree(responseString);
             JsonNode jsonNode = obj.get("output");
             if (jsonNode == null) {
                 logger.warn("No output received from GPT API");
@@ -49,6 +57,10 @@ public interface ChatGptClientInterface {
             GPTResponse myResponse = new GPTResponse();
             myResponse.setAnswer(stringBuilder.toString());
             JsonNode usageNode = obj.get("usage");
+            if (usageNode == null) {
+                logger.warn("Usage information not provided in OpenAI API response");
+                throw new RuntimeException("Invalid API response: no usage field");
+            }
             myResponse.setInputTokens(usageNode.get("input_tokens").numberValue().longValue());
             myResponse.setOutputTokens(usageNode.get("output_tokens").numberValue().longValue());
             logger.debug("Successfully received response from GPT API. Input tokens: {}, Output tokens: {}",

@@ -9,10 +9,13 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 
 public interface ChatGptClientInterface {
+    Logger logger = LoggerFactory.getLogger(ChatGptClientInterface.class);
 
     String ENDPOINT = "https://api.openai.com/v1/responses";
     ObjectMapper objectMapper = new ObjectMapper();
@@ -28,13 +31,18 @@ public interface ChatGptClientInterface {
         try (CloseableHttpClient httpclient = HttpClients.custom()
                 .disableCookieManagement()
                 .build()) {
+            logger.debug("Sending request to GPT API endpoint: {}", ENDPOINT);
             String str = httpclient.execute(request, response -> EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8));
 
             JsonNode obj = objectMapper.readTree(str);
             JsonNode jsonNode = obj.get("output");
+            if (jsonNode == null) {
+                logger.warn("No output received from GPT API");
+                throw new RuntimeException("Invalid API response: no output field");
+            }
             StringBuilder stringBuilder = new StringBuilder();
             for (JsonNode jsonNode1 : jsonNode) {
-                if (jsonNode1.get("type").asText().equals("message")) {
+                if (jsonNode1.get("type") != null && jsonNode1.get("type").asText().equals("message")) {
                     stringBuilder.append(jsonNode1.get("content").get(0).get("text").textValue()).append("\n");
                 }
             }
@@ -43,9 +51,11 @@ public interface ChatGptClientInterface {
             JsonNode usageNode = obj.get("usage");
             myResponse.setInputTokens(usageNode.get("input_tokens").numberValue().longValue());
             myResponse.setOutputTokens(usageNode.get("output_tokens").numberValue().longValue());
-
+            logger.debug("Successfully received response from GPT API. Input tokens: {}, Output tokens: {}",
+                    myResponse.getInputTokens(), myResponse.getOutputTokens());
             return myResponse;
         } catch (Exception e) {
+            logger.error("Failed to send request to GPT API", e);
             throw new RuntimeException("Failed to send request to GPT API", e);
         }
     }

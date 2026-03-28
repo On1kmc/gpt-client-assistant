@@ -155,7 +155,7 @@ public class ChatGPTClient implements ChatGptClientInterface {
                 }
             });
         } catch (Throwable t) {
-            throw new RuntimeException(t);
+            logger.error("Error during thread cleanup", t);
         }
     }
 

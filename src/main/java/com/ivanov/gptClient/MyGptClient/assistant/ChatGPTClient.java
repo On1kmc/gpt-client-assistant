@@ -12,13 +12,10 @@ import com.ivanov.gptClient.MyGptClient.messages.ImageContentPart;
 import com.ivanov.gptClient.MyGptClient.messages.TextContentPart;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
-import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +33,7 @@ public class ChatGPTClient {
     private GptMessage systemMessage;
     private final long expirationMillis;
     private final ConcurrentMap<Long, ReentrantLock> userLocks = new ConcurrentHashMap<>();
+    private final boolean needHistory;
 
     private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "threads-cleaner");
@@ -50,6 +48,7 @@ public class ChatGPTClient {
         this.needSystemMessage = builder.needSystemMessage;
         boolean needCleaner = builder.needCleaner;
         this.threadsMap = new ConcurrentHashMap<>();
+        this.needHistory = builder.needHistory;
 
         this.expirationMillis = builder.expirationMillis;
         if (needCleaner) {
@@ -73,6 +72,7 @@ public class ChatGPTClient {
         private String instruction;
         private boolean needSystemMessage = false;
         private boolean needCleaner = false;
+        private boolean needHistory = false;
         private long expirationMillis;
 
         // --- setters ---
@@ -89,6 +89,12 @@ public class ChatGPTClient {
         public Builder enableCleaner(TimeUnit unit, long duration) {
             this.needCleaner = true;
             this.expirationMillis = unit.toMillis(duration);
+            this.needHistory = true;
+            return this;
+        }
+
+        public Builder enableHistory() {
+            this.needHistory = true;
             return this;
         }
 
@@ -120,6 +126,10 @@ public class ChatGPTClient {
 
             if (needCleaner && expirationMillis == 0) {
                 throw new IllegalStateException("Expiration must be > 0");
+            }
+
+            if (needCleaner && !needHistory) {
+                throw new IllegalStateException("history is not needed, but cleaner is enabled");
             }
         }
     }
@@ -159,7 +169,8 @@ public class ChatGPTClient {
         return threadsMap.compute(userId, (k, existing) -> {
             if (existing == null) {
                 GPTThread nt;
-                if (needSystemMessage) {List<GptMessage> list = new ArrayList<>();
+                if (needSystemMessage) {
+                    List<GptMessage> list = new ArrayList<>();
                     list.add(systemMessage);
                     nt = new GPTThread(list);
                 } else {
@@ -201,8 +212,17 @@ public class ChatGPTClient {
 
         lock.lock();
         try {
-            GPTThread thread = getOrCreateThread(userId);
-            List<GptMessage> messages = thread.getMessages();
+            List<GptMessage> messages;
+            if (needHistory) {
+                GPTThread thread = getOrCreateThread(userId);
+                messages = thread.getMessages();
+            } else {
+                messages = new ArrayList<>();
+                if (needSystemMessage) {
+                    messages.add(systemMessage);
+                }
+            }
+
 
             GptMessage gptMessage = new GptMessage();
             List<ContentPart> contentParts = new ArrayList<>();
@@ -237,16 +257,17 @@ public class ChatGPTClient {
 
             GPTResponse response = sendRequest(stringEntity);
 
-            GptMessage answerMsg = new GptMessage();
-            List<ContentPart> content = new ArrayList<>();
-            TextContentPart textContent = new TextContentPart();
-            textContent.setText(response.getAnswer());
-            textContent.setType("output_text");
-            content.add(textContent);
-            answerMsg.setContent(content);
-            answerMsg.setRole("assistant");
-            messages.add(answerMsg);
-
+            if (needHistory) {
+                GptMessage answerMsg = new GptMessage();
+                List<ContentPart> content = new ArrayList<>();
+                TextContentPart textContent = new TextContentPart();
+                textContent.setText(response.getAnswer());
+                textContent.setType("output_text");
+                content.add(textContent);
+                answerMsg.setContent(content);
+                answerMsg.setRole("assistant");
+                messages.add(answerMsg);
+            }
             return response;
         } finally {
             lock.unlock();

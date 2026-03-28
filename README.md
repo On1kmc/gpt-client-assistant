@@ -192,27 +192,6 @@ GPTResponse sendImageMessage(Long userId, String imageLink)
 GPTResponse sendImageMessageWithWeb(Long userId, String imageLink) 
     throws JsonProcessingException;
 
-// Управление потоками
-GPTThread getOrCreateThread(Long userId);
-void removeThread(Long userId);
-
-// Управление системным сообщением
-void setSystemMessage(String instruction);
-GptMessage getSystemMessage(String instruction);
-
-// Управление очисткой
-void startCleaner(long checkInterval, TimeUnit unit);
-void stopCleaner();
-```
-
-### GPTResponse
-
-```java
-public class GPTResponse {
-    String getAnswer();                    // Ответ ассистента
-    long getInputTokens();                 // Количество входных токенов
-    long getOutputTokens();                // Количество выходных токенов
-}
 ```
 
 ### GPTModel
@@ -440,36 +419,6 @@ System.out.printf(
 );
 ```
 
-## ⚠️ Известные ограничения
-
-- 🔴 Поддерживает только модели `GPT_5_4` и `GPT_5_4_MINI`
-- 🔴 API endpoint жёстко закодирован (будет исправлено в будущих версиях)
-- 🟡 Размер истории сообщений не ограничен (может привести к большому использованию памяти)
-- 🟡 Нет встроенного retry механизма при ошибках API
-- 🟡 Нет поддержки асинхронных операций (планируется)
-
-## 🔄 Обновление историй версий
-
-### v1.1.0 (текущая)
-- ✅ Начальный релиз
-- ✅ Поддержка текста и изображений
-- ✅ Управление историей сообщений
-- ✅ Автоматическая очистка потоков
-- ✅ Web search интеграция
-
-## 🤝 Внесение улучшений
-
-Мы приветствуем pull request'ы! Для больших изменений сначала откройте issue.
-
-1. Fork репозиторий
-2. Создайте ветку для вашего feature (`git checkout -b feature/AmazingFeature`)
-3. Commit ваши ��зменения (`git commit -m 'Add some AmazingFeature'`)
-4. Push в ветку (`git push origin feature/AmazingFeature`)
-5. Откройте Pull Request
-
-## 📝 Лицензия
-
-Проект распространяется под лицензией MIT. See `LICENSE` for more information.
 
 ## 📧 Контакты
 
@@ -478,9 +427,7 @@ System.out.printf(
 
 ## ⭐ Благодарности
 
-Спасибо за использование нашей библиотеки! Если она вам нравится, не забудьте поставить ⭐ на GitHub.
+Спасибо за использование библиотеки! Если она вам нравится, не забудьте поставить ⭐ на GitHub.
 
 ---
 
-**Версия документации:** 1.1.0  
-**Последнее обновление:** 2026-03-28

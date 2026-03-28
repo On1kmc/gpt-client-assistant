@@ -9,7 +9,7 @@ public class GPTThread {
     private volatile long lastAccessTimeMillis = System.currentTimeMillis();
 
     private volatile long tokens;
-    private List<GptMessage> messages;
+    private volatile List<GptMessage> messages;
 
     public GPTThread(List<GptMessage> list) {
         messages = list;

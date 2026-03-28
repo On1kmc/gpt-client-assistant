@@ -1,8 +1,6 @@
 package com.ivanov.gptClient.MyGptClient.assistant;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ivanov.gptClient.MyGptClient.*;
 import com.ivanov.gptClient.MyGptClient.entities.GPTResponse;
 import com.ivanov.gptClient.MyGptClient.entities.GptRequestEntity;
@@ -10,10 +8,6 @@ import com.ivanov.gptClient.MyGptClient.messages.ContentPart;
 import com.ivanov.gptClient.MyGptClient.messages.GptMessage;
 import com.ivanov.gptClient.MyGptClient.messages.ImageContentPart;
 import com.ivanov.gptClient.MyGptClient.messages.TextContentPart;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.HttpClients;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 
 import java.nio.charset.StandardCharsets;
@@ -23,9 +17,9 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class ChatGPTClient {
+public class ChatGPTClient implements ChatGptClientInterface {
 
-    final String ENDPOINT = "https://api.openai.com/v1/responses";
+
     private final String API_TOKEN;
     private final GPTModel GPT_MODEL;
     private final ConcurrentMap<Long, GPTThread> threadsMap;
@@ -34,6 +28,8 @@ public class ChatGPTClient {
     private final long expirationMillis;
     private final ConcurrentMap<Long, ReentrantLock> userLocks = new ConcurrentHashMap<>();
     private final boolean needHistory;
+//    ObjectMapper objectMapper = new ObjectMapper();
+
 
     private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "threads-cleaner");
@@ -142,7 +138,8 @@ public class ChatGPTClient {
     }
 
     // Остановить уборщик (вызывайте при shutdown)
-    public void stopCleaner() {
+    // добавить в конфигурацию при создании бина @Bean(destroyMethod = "shutdown")
+    public void shutdown() {
         cleaner.shutdownNow();
     }
 
@@ -150,17 +147,15 @@ public class ChatGPTClient {
     private void cleanUp() {
         try {
             long now = System.currentTimeMillis();
-            for (Map.Entry<Long, GPTThread> entry : threadsMap.entrySet()) {
-                GPTThread thread = entry.getValue();
-                if (thread == null) continue;
+            threadsMap.forEach((userId, thread) -> {
                 long last = thread.getLastAccessTimeMillis();
                 if (now - last >= expirationMillis) {
-                    threadsMap.remove(entry.getKey(), thread);
-                    userLocks.remove(entry.getKey());
+                    threadsMap.remove(userId, thread);
+                    userLocks.remove(userId);
                 }
-            }
+            });
         } catch (Throwable t) {
-            t.printStackTrace();
+            throw new RuntimeException(t);
         }
     }
 
@@ -228,7 +223,7 @@ public class ChatGPTClient {
             List<ContentPart> contentParts = new ArrayList<>();
 
 
-            if (messageText != null) {
+            if (messageText != null && !messageText.isBlank()) {
                 TextContentPart textContentPart = new TextContentPart();
                 textContentPart.setType("input_text");
                 textContentPart.setText(messageText);
@@ -237,7 +232,7 @@ public class ChatGPTClient {
 
             if (imageUrl != null) {
                 ImageContentPart imageContentPart = new ImageContentPart();
-                imageContentPart.setImage_url(imageUrl);
+                imageContentPart.setImageUrl(imageUrl);
                 imageContentPart.setType("input_image");
                 contentParts.add(imageContentPart);
             }
@@ -246,7 +241,6 @@ public class ChatGPTClient {
             gptMessage.setRole("user");
             messages.add(gptMessage);
 
-            ObjectMapper objectMapper = new ObjectMapper();
 
             GptRequestEntity requestEntity = new GptRequestEntity(needWeb);
             requestEntity.setModel(GPT_MODEL.getTitle());
@@ -255,7 +249,7 @@ public class ChatGPTClient {
             String stringObject = objectMapper.writeValueAsString(requestEntity);
             StringEntity stringEntity = new StringEntity(stringObject, StandardCharsets.UTF_8);
 
-            GPTResponse response = sendRequest(stringEntity);
+            GPTResponse response = sendRequest(stringEntity, API_TOKEN);
 
             if (needHistory) {
                 GptMessage answerMsg = new GptMessage();
@@ -275,37 +269,7 @@ public class ChatGPTClient {
     }
 
 
-    private GPTResponse sendRequest(StringEntity stringEntity) {
-        HttpPost request = new HttpPost(ENDPOINT);
-        request.addHeader("Authorization", "Bearer " + API_TOKEN);
-        request.addHeader("Content-Type", "application/json");
-        request.setEntity(stringEntity);
 
-        try (CloseableHttpClient httpclient = HttpClients.custom()
-                .disableCookieManagement()
-                .build()) {
-            String str = httpclient.execute(request, response -> EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8));
-
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode obj = mapper.readTree(str);
-            JsonNode jsonNode = obj.get("output");
-            StringBuilder stringBuilder = new StringBuilder();
-            for (JsonNode jsonNode1 : jsonNode) {
-                if (jsonNode1.get("type").asText().equals("message")) {
-                    stringBuilder.append(jsonNode1.get("content").get(0).get("text").textValue()).append("\n");
-                }
-            }
-            GPTResponse myResponse = new GPTResponse();
-            myResponse.setAnswer(stringBuilder.toString());
-            JsonNode usageNode = obj.get("usage");
-            myResponse.setInputTokens(usageNode.get("input_tokens").numberValue().longValue());
-            myResponse.setOutputTokens(usageNode.get("output_tokens").numberValue().longValue());
-
-            return myResponse;
-        } catch (Exception e) {
-            throw new RuntimeException();
-        }
-    }
 
 
     public GptMessage getSystemMessage(String instruction) {

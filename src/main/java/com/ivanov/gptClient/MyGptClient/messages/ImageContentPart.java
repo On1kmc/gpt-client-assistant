@@ -2,16 +2,16 @@ package com.ivanov.gptClient.MyGptClient.messages;
 
 public class ImageContentPart  implements ContentPart {
 
-    private String image_url;
-    private String type = "input_image";
+    private String imageUrl;
+    private String type;
 
 
-    public String getImage_url() {
-        return image_url;
+    public String getImageUrl() {
+        return imageUrl;
     }
 
-    public void setImage_url(String image_url) {
-        this.image_url = image_url;
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
     }
 
     public String getType() {
